@@ -68,14 +68,18 @@ class PodaDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> "PodaDataOptionsFlow":
-        return PodaDataOptionsFlow(config_entry)
+        return PodaDataOptionsFlow()
 
 
 class PodaDataOptionsFlow(config_entries.OptionsFlow):
-    """Options flow allowing the scan interval to be adjusted."""
+    """Options flow allowing the scan interval to be adjusted.
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+    NOTE: Do not override __init__ to store config_entry manually. Since
+    Home Assistant 2024.11, ``config_entry`` is exposed as a read-only
+    property on the base OptionsFlow class and is set automatically by
+    the core; assigning ``self.config_entry`` here raises an
+    AttributeError (shows up in the UI as "500 Internal Server Error").
+    """
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
