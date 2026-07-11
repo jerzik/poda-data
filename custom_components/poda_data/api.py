@@ -175,6 +175,9 @@ class PodaClient:
             await self.async_login()
 
         html = await self._fetch(BILLING_URL)
+        _LOGGER.debug(
+            "Billing page fetched, length=%d bytes, full content:\n%s", len(html), html
+        )
         soup = BeautifulSoup(html, "html.parser")
 
         if soup.find("form", id=re.compile("login", re.I)):
@@ -392,9 +395,13 @@ def _find_heading(soup: BeautifulSoup, keyword: str):
     """Find the element that acts as a section heading containing `keyword`.
 
     The PODA portal does not necessarily use <h1>-<h4> tags for section
-    titles (could be a <div>, <span>, <strong>, etc.), so instead of
-    restricting by tag name we look for any short, "leaf" element (no
-    element children) whose text starts with the keyword.
+    titles (could be a <div>, <span>, <strong>, etc.), and the heading may
+    also wrap an icon element (<svg>, <i>, ...) alongside the text. So
+    instead of requiring a pure "leaf" text node (which would incorrectly
+    reject headings containing an icon), we collect every tag whose
+    rendered text starts with the keyword and pick the *shortest* one -
+    i.e. the most specific element that still contains the full heading
+    text, ignoring large wrapping containers.
 
     The page also contains a help/"Nápověda" panel that documents the CSV
     column layout and reuses the exact same section names ("Volání",
@@ -402,22 +409,25 @@ def _find_heading(soup: BeautifulSoup, keyword: str):
     appear in the document. To avoid matching that help text instead of
     the actual section, we prefer a candidate whose nearest following
     <table> looks like a real data table (its header row contains
-    "Číslo") over the first candidate found.
+    "Číslo") over just taking the shortest/first candidate.
     """
     keyword_lower = keyword.lower()
     candidates = []
     for tag in soup.find_all(True):
-        if tag.name in ("script", "style", "option"):
+        if tag.name in ("script", "style", "option", "head"):
             continue
         text = tag.get_text(strip=True)
-        if not text or len(text) > 60:
-            continue
-        if tag.find(True) is not None:
-            # Has element children -> not a leaf text node, skip (avoids
-            # matching a huge wrapping <div> that merely contains the text).
+        if not text or len(text) > 80:
             continue
         if text.lower().startswith(keyword_lower):
             candidates.append(tag)
+
+    if not candidates:
+        return None
+
+    # Most specific (shortest text) first - avoids picking a huge
+    # wrapping container whose text happens to start with the keyword.
+    candidates.sort(key=lambda t: len(t.get_text(strip=True)))
 
     for cand in candidates:
         table = cand.find_next("table")
@@ -429,7 +439,7 @@ def _find_heading(soup: BeautifulSoup, keyword: str):
         if "\u010d\u00edslo" in header_text:  # "číslo"
             return cand
 
-    return candidates[0] if candidates else None
+    return candidates[0]
 
 
 def _find_field(lower_fieldnames: list[str], original: list[str] | None, keywords: list[str]) -> str | None:
