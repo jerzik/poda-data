@@ -110,8 +110,17 @@ class PodaClient:
             async with self._session.get(LOGIN_URL, headers=DEFAULT_HEADERS) as resp:
                 resp.raise_for_status()
                 html = await resp.text()
+                cookies_after_get = {
+                    c.key: c.value for c in self._session.cookie_jar if c.key
+                }
         except aiohttp.ClientError as err:
             raise PodaConnectionError(f"Could not load login page: {err}") from err
+
+        _LOGGER.debug(
+            "Login page GET: status=%s cookies_received=%s",
+            resp.status,
+            sorted(cookies_after_get.keys()),
+        )
 
         soup = BeautifulSoup(html, "html.parser")
         form = soup.find("form", id=re.compile("login", re.I)) or soup.find("form")
@@ -158,6 +167,17 @@ class PodaClient:
         headers = dict(DEFAULT_HEADERS)
         headers["Referer"] = LOGIN_URL
         headers["Origin"] = BASE_URL
+        headers["Sec-Fetch-Site"] = "same-origin"
+
+        redacted_payload = {
+            k: ("***" if k in (user_field, pass_field) else v) for k, v in payload.items()
+        }
+        _LOGGER.debug(
+            "Login POST about to send: url=%s headers=%s payload=%s",
+            post_url,
+            headers,
+            redacted_payload,
+        )
 
         try:
             async with self._session.post(
