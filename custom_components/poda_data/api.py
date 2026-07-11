@@ -219,26 +219,33 @@ class PodaClient:
             # The most reliable failure signal: the exact same login form is
             # present again. This is language/wording independent, unlike
             # scanning for a specific error message.
-            error_block = soup_after.find(class_=re.compile("alert|error|invalid", re.I))
-            error_text = error_block.get_text(strip=True) if error_block else ""
             title = soup_after.find("title")
+            form_after = soup_after.find("form", id=re.compile("login", re.I))
+            context_html = ""
+            search_root = None
+            if form_after is not None:
+                search_root = form_after.parent.parent if form_after.parent else form_after
+                context_node = search_root or form_after
+                context_html = str(context_node)
+            else:
+                body = soup_after.find("body")
+                context_html = str(body) if body else html
+            error_text = ""
+            if search_root is not None:
+                error_candidate = search_root.find(
+                    class_=re.compile("alert|error|invalid|help-block", re.I)
+                )
+                if error_candidate is not None:
+                    error_text = error_candidate.get_text(strip=True)
             _LOGGER.debug(
-                "Login POST failed: title=%r error_block_found=%s error_text=%r "
-                "response_length=%d",
+                "Login POST failed: title=%r error_text=%r response_length=%d",
                 title.get_text(strip=True) if title else None,
-                error_block is not None,
                 error_text,
                 len(html),
             )
-            if not error_text:
-                # No visible error message at all - dump a larger chunk so we
-                # can see whether this genuinely looks like a plain re-served
-                # login form (possible silent bot mitigation) rather than a
-                # normal "wrong credentials" response.
-                _LOGGER.debug(
-                    "Login POST response (no error text found), first 4000 chars:\n%s",
-                    html[:4000],
-                )
+            _LOGGER.debug(
+                "Login form area HTML (%d chars):\n%s", len(context_html), context_html[:6000]
+            )
             raise PodaAuthError(
                 f"Login rejected - still on login form after POST. {error_text}".strip()
             )
