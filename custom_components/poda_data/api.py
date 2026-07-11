@@ -126,6 +126,14 @@ class PodaClient:
             name = inp.get("name")
             if not name:
                 continue
+            if inp.name == "input" and inp.get("type") == "checkbox":
+                # Yii2 typically renders a hidden "unchecked" fallback value
+                # right before the checkbox itself. Only override that
+                # fallback if the checkbox actually starts out checked -
+                # otherwise we'd wrongly submit rememberMe=1 etc.
+                if inp.has_attr("checked"):
+                    payload[name] = inp.get("value", "1")
+                continue
             payload[name] = inp.get("value", "")
 
         # Best-effort detection of the username/password fields.
@@ -149,23 +157,39 @@ class PodaClient:
 
         headers = dict(DEFAULT_HEADERS)
         headers["Referer"] = LOGIN_URL
+        headers["Origin"] = BASE_URL
 
         try:
             async with self._session.post(
                 post_url, data=payload, headers=headers, allow_redirects=True
             ) as resp:
-                resp.raise_for_status()
+                status = resp.status
                 final_url = str(resp.url)
                 html = await resp.text()
         except aiohttp.ClientError as err:
             raise PodaConnectionError(f"Login request failed: {err}") from err
 
-        if "login" in final_url.lower() and (
-            "heslo" in html.lower() or "password" in html.lower()
-        ):
-            # Still on a login-looking page -> credentials likely rejected.
-            if re.search(r"neplatn|nespr\u00e1vn|invalid", html, re.I):
-                raise PodaAuthError("Login rejected - check username/password")
+        soup_after = BeautifulSoup(html, "html.parser")
+        still_on_login = soup_after.find("form", id=re.compile("login", re.I)) is not None
+
+        _LOGGER.debug(
+            "Login POST: status=%s final_url=%s fields_sent=%s still_on_login_form=%s",
+            status,
+            final_url,
+            sorted(payload.keys()),
+            still_on_login,
+        )
+
+        if still_on_login:
+            # The most reliable failure signal: the exact same login form is
+            # present again. This is language/wording independent, unlike
+            # scanning for a specific error message.
+            error_block = soup_after.find(class_=re.compile("alert|error", re.I))
+            error_text = error_block.get_text(strip=True) if error_block else ""
+            _LOGGER.debug("Login POST response snippet (first 2000 chars):\n%s", html[:2000])
+            raise PodaAuthError(
+                f"Login rejected - still on login form after POST. {error_text}".strip()
+            )
 
         self._logged_in = True
 
