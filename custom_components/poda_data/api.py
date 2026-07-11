@@ -106,6 +106,13 @@ class PodaClient:
 
     async def async_login(self) -> None:
         """Log in to the portal, following the real login form."""
+        _LOGGER.debug(
+            "Login attempt with username_preview=%r (len=%d), password_len=%d",
+            (self._username[:2] + "…" if len(self._username) > 2 else self._username),
+            len(self._username),
+            len(self._password),
+        )
+
         try:
             async with self._session.get(LOGIN_URL, headers=DEFAULT_HEADERS) as resp:
                 resp.raise_for_status()
@@ -117,9 +124,10 @@ class PodaClient:
             raise PodaConnectionError(f"Could not load login page: {err}") from err
 
         _LOGGER.debug(
-            "Login page GET: status=%s cookies_received=%s",
+            "Login page GET: status=%s cookies_received=%s csrf_cookie_value=%r",
             resp.status,
             sorted(cookies_after_get.keys()),
+            cookies_after_get.get("_csrf"),
         )
 
         soup = BeautifulSoup(html, "html.parser")
@@ -172,11 +180,18 @@ class PodaClient:
         redacted_payload = {
             k: ("***" if k in (user_field, pass_field) else v) for k, v in payload.items()
         }
+        outgoing_cookies = {
+            c.key: c.value for c in self._session.cookie_jar if c.key
+        }
         _LOGGER.debug(
-            "Login POST about to send: url=%s headers=%s payload=%s",
+            "Login POST about to send: url=%s headers=%s payload=%s "
+            "hidden_csrf_field=%r cookie_jar_csrf=%r cookies_that_will_be_sent=%s",
             post_url,
             headers,
             redacted_payload,
+            payload.get("_csrf"),
+            outgoing_cookies.get("_csrf"),
+            sorted(outgoing_cookies.keys()),
         )
 
         try:
