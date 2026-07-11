@@ -235,33 +235,35 @@ class PodaClient:
 
     @staticmethod
     def _find_csv_link(soup: BeautifulSoup, section_heading: str) -> str | None:
-        """Find the 'Stáhnout jako CSV' link belonging to a given section."""
-        heading = soup.find(
-            lambda tag: tag.name in ("h1", "h2", "h3", "h4")
-            and section_heading.lower() in tag.get_text(strip=True).lower()
-        )
-        if heading is None:
+        """Find the 'Stáhnout jako CSV' link belonging to a given section.
+
+        The link can appear either before or after the section heading in
+        document order (e.g. visually placed top-right of a header row but
+        earlier in the markup), so we pick whichever CSV-labelled link is
+        nearest to the heading by document position rather than assuming
+        a fixed forward/backward direction.
+        """
+        heading = _find_heading(soup, section_heading)
+
+        all_tags = soup.find_all(True)
+        csv_links = [
+            t for t in all_tags if t.name == "a" and "csv" in t.get_text(strip=True).lower()
+        ]
+        if not csv_links:
             return None
 
-        node = heading
-        for _ in range(30):
-            node = node.find_next(["a", "h1", "h2", "h3", "h4"])
-            if node is None:
-                break
-            if node.name in ("h1", "h2", "h3", "h4"):
-                break
-            if node.name == "a" and "csv" in node.get_text(strip=True).lower():
-                href = node.get("href")
-                if href:
-                    return urljoin(BASE_URL, href)
-        return None
+        if heading is not None:
+            position = {id(tag): i for i, tag in enumerate(all_tags)}
+            heading_idx = position.get(id(heading))
+            if heading_idx is not None:
+                csv_links.sort(key=lambda a: abs(position.get(id(a), 0) - heading_idx))
+
+        href = csv_links[0].get("href")
+        return urljoin(BASE_URL, href) if href else None
 
     @staticmethod
     def _parse_data_usage(soup: BeautifulSoup, stats: dict[str, NumberStats]) -> None:
-        heading = soup.find(
-            lambda tag: tag.name in ("h1", "h2", "h3", "h4")
-            and "datov" in tag.get_text(strip=True).lower()
-        )
+        heading = _find_heading(soup, "Datové přenosy") or _find_heading(soup, "Datov")
         if heading is None:
             _LOGGER.warning("Could not find 'Datové přenosy' section")
             return
@@ -384,6 +386,50 @@ class PodaClient:
             entry.sms_count += 1
             if price_field:
                 entry.sms_price += _parse_number(row.get(price_field, "0"))
+
+
+def _find_heading(soup: BeautifulSoup, keyword: str):
+    """Find the element that acts as a section heading containing `keyword`.
+
+    The PODA portal does not necessarily use <h1>-<h4> tags for section
+    titles (could be a <div>, <span>, <strong>, etc.), so instead of
+    restricting by tag name we look for any short, "leaf" element (no
+    element children) whose text starts with the keyword.
+
+    The page also contains a help/"Nápověda" panel that documents the CSV
+    column layout and reuses the exact same section names ("Volání",
+    "SMS a MMS", "Datové přenosy") *before* the real section headings
+    appear in the document. To avoid matching that help text instead of
+    the actual section, we prefer a candidate whose nearest following
+    <table> looks like a real data table (its header row contains
+    "Číslo") over the first candidate found.
+    """
+    keyword_lower = keyword.lower()
+    candidates = []
+    for tag in soup.find_all(True):
+        if tag.name in ("script", "style", "option"):
+            continue
+        text = tag.get_text(strip=True)
+        if not text or len(text) > 60:
+            continue
+        if tag.find(True) is not None:
+            # Has element children -> not a leaf text node, skip (avoids
+            # matching a huge wrapping <div> that merely contains the text).
+            continue
+        if text.lower().startswith(keyword_lower):
+            candidates.append(tag)
+
+    for cand in candidates:
+        table = cand.find_next("table")
+        if table is None:
+            continue
+        header_text = " ".join(
+            cell.get_text(strip=True).lower() for cell in table.find_all(["th", "td"])[:5]
+        )
+        if "\u010d\u00edslo" in header_text:  # "číslo"
+            return cand
+
+    return candidates[0] if candidates else None
 
 
 def _find_field(lower_fieldnames: list[str], original: list[str] | None, keywords: list[str]) -> str | None:
