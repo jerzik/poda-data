@@ -1,0 +1,19 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zip component dir
+        run: |
+          cd custom_components/poda_data
+          zip -r ../../poda_data.zip .
+      - name: Upload zip to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: poda_data.zip

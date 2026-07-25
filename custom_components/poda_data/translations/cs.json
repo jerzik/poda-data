@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Přihlášení k PODA klientské zóně",
+        "data": {
+          "username": "Uživatelské jméno",
+          "password": "Heslo"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Nesprávné uživatelské jméno nebo heslo",
+      "cannot_connect": "Nepodařilo se připojit ke klient.poda.cz",
+      "unknown": "Neočekávaná chyba"
+    },
+    "abort": {
+      "already_configured": "Tento účet je již nakonfigurován"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "scan_interval_hours": "Interval aktualizace (hodiny)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "calls_minutes": { "name": "Volání – doba" },
+      "calls_price": { "name": "Volání – cena" },
+      "sms_count": { "name": "SMS – počet" },
+      "sms_price": { "name": "SMS – cena" },
+      "data_used": { "name": "Data – vyčerpáno" },
+      "data_limit": { "name": "Data – limit" }
+    }
+  }
+}
