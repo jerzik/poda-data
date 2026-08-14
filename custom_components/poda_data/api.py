@@ -258,9 +258,7 @@ class PodaClient:
             await self.async_login()
 
         html = await self._fetch(BILLING_URL)
-        _LOGGER.debug(
-            "Billing page fetched, length=%d bytes, full content:\n%s", len(html), html
-        )
+        _LOGGER.debug("Billing page fetched, length=%d bytes", len(html))
         soup = BeautifulSoup(html, "html.parser")
 
         if soup.find("form", id=re.compile("login", re.I)):
@@ -294,6 +292,23 @@ class PodaClient:
         # (Objem + Vyčerpáno columns). The portal's data CSV link returns
         # a different format than expected (calls headers), so we skip it
         # and rely on the HTML table values.
+
+        _LOGGER.debug(
+            "PODA stats for entities: %s",
+            {
+                number: {
+                    "nazev": s.name,
+                    "pocet_hovoru": s.calls_count,
+                    "volane_minuty": s.calls_minutes,
+                    "cena_hovoru_kc": s.calls_price,
+                    "pocet_sms": s.sms_count,
+                    "cena_sms_kc": s.sms_price,
+                    "vycerpano_mb": s.data_used_mb,
+                    "limit_mb": s.data_limit_mb,
+                }
+                for number, s in stats.items()
+            },
+        )
 
         return stats
 
