@@ -53,11 +53,11 @@ class PodaDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except PodaConnectionError:
                 errors["base"] = "cannot_connect"
             except Exception:  # noqa: BLE001
-                _LOGGER.exception("Unexpected error validating PODA login")
+                _LOGGER.error("Unexpected error validating PODA login")
                 errors["base"] = "unknown"
             else:
                 return self.async_create_entry(
-                    title=f"PODA ({user_input[CONF_USERNAME]})", data=user_input
+                    title="PODA data", data=user_input
                 )
 
         return self.async_show_form(

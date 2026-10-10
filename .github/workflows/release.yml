@@ -4,16 +4,19 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   zip:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Zip component dir
         run: |
           cd custom_components/poda_data
-          zip -r ../../poda_data.zip .
+          zip -r ../../poda_data.zip . -x '*__pycache__*' '*.pyc'
       - name: Upload zip to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
         with:
           files: poda_data.zip

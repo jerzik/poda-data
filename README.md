@@ -13,9 +13,9 @@ a vytvoří pro každé číslo 6 senzorů:
 | Data – vyčerpáno | Vyčerpaná data z FUP balíčku | MB |
 | Data – limit | Velikost datového balíčku (FUP) | MB |
 
-Data o voláních, SMS i datových přenosech se stahují přes odkazy
+Data o voláních a SMS se stahují přes odkazy
 **„Stáhnout jako CSV"** na stránce vyúčtování a integrace si je sama sečte po
-číslech. Z HTML tabulky se navíc bere jméno tarifu a FUP limit (ten v CSV není).
+číslech. Z HTML tabulky se bere jméno tarifu, vyčerpaná data a FUP limit.
 
 Formáty všech tří CSV exportů jsou **ověřené na reálných datech** a parsování
 je otestované proti skutečnému vyúčtování (výsledky se shodují do desetin):
@@ -200,3 +200,23 @@ logger:
 ## Licence
 
 MIT – viz [LICENSE](LICENSE).
+
+## Soukromí a automatické nalezení čísel
+
+Ukázky používají výhradně fiktivní čísla `000000001` a `000000002`.
+Po přihlášení integrace načte čísla z vyúčtování daného účtu a automaticky
+vytvoří zařízení a senzory. Nová čísla doplní při dalších aktualizacích,
+včetně čísel bez uskutečněného volání nebo SMS, pokud jsou v tabulce účtu.
+Není nutné zadávat čísla do zdrojového kódu. V přehledu Home Assistantu
+se zařízení objeví automaticky; vlastní YAML dashboard používá entity
+vybrané z registru Home Assistantu.
+
+Skutečná čísla a názvy tarifů jsou součástí zařízení a atributů ve tvém
+Home Assistantu. Před sdílením snímků obrazovky nebo záloh je anonymizuj.
+Integrace nevypisuje přihlašovací údaje, cookies, HTML formulář,
+telefonní čísla ani statistiky jednotlivých účastníků do diagnostických logů.
+
+## Ověření před vydáním
+
+`python -m unittest discover -s tests -v` používá pouze syntetická data.
+CI navíc kontroluje soukromá čísla, závislosti, HACS a Hassfest.

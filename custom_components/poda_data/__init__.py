@@ -11,7 +11,11 @@ from .coordinator import PodaDataCoordinator
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PODA data from a config entry."""
     coordinator = PodaDataCoordinator(hass, entry)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        await coordinator.async_close()
+        raise
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 

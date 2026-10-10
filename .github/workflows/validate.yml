@@ -8,13 +8,16 @@ on:
     - cron: "0 3 * * 0"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   hacs:
     name: HACS validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hacs/action@main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa
         with:
           category: integration
 
@@ -22,5 +25,18 @@ jobs:
     name: Hassfest validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: home-assistant/actions/hassfest@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: home-assistant/actions/hassfest@06749dd8c0b54f350bc69c8752456cee498808a3
+
+  tests:
+    name: Parser, privacy and dependency checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-test.txt pip-audit
+      - run: python -m unittest discover -s ./tests -v
+      - run: python scripts/check_privacy.py
+      - run: python -m pip_audit -r requirements-test.txt

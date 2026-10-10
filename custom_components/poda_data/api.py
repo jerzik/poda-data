@@ -9,12 +9,12 @@ overwriting whichever fields look like the username/password inputs.
 This makes the client considerably more resilient to small markup
 changes than hard-coded field names would be.
 
-After login, the client fetches the "Vyúčtování" (billing) page for
+After login, the client fetches the "VyĂşÄŤtovĂˇnĂ­" (billing) page for
 mobile numbers and:
-  * scrapes the "Datové přenosy" (data usage) table directly from the
+  * scrapes the "DatovĂ© pĹ™enosy" (data usage) table directly from the
     HTML to get the subscriber name and the FUP limit ("Objem"), and
-  * follows the "Stáhnout jako CSV" links for the "Volání" (calls),
-    "SMS a MMS" and "Datové přenosy" (data) sections and downloads +
+  * follows the "StĂˇhnout jako CSV" links for the "VolĂˇnĂ­" (calls),
+    "SMS a MMS" and "DatovĂ© pĹ™enosy" (data) sections and downloads +
     parses those three CSV exports.
 
 Confirmed CSV column layouts (verified against real exports):
@@ -31,7 +31,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -80,7 +80,7 @@ def _normalize_number(raw: str) -> str:
         digits = digits[5:]
     elif digits.startswith("420") and len(digits) > 9:
         digits = digits[3:]
-    return digits
+    return digits if re.fullmatch(r"[0-9]{9}", digits) else ""
 
 
 def _parse_number(text: str) -> float:
@@ -95,6 +95,17 @@ def _parse_number(text: str) -> float:
         return 0.0
 
 
+def _portal_url(base: str, target: str) -> str:
+    """Keep credentials and authenticated downloads on the HTTPS portal."""
+    url = urljoin(base, target)
+    parsed = urlsplit(url)
+    expected = urlsplit(BASE_URL)
+    if (parsed.scheme != "https" or parsed.hostname != expected.hostname
+            or parsed.port not in (None, 443) or parsed.username or parsed.password):
+        raise PodaConnectionError("Portal returned an untrusted URL")
+    return url
+
+
 class PodaClient:
     """Handles authentication and data retrieval from klient.poda.cz."""
 
@@ -106,29 +117,7 @@ class PodaClient:
 
     async def async_login(self) -> None:
         """Log in to the portal, following the real login form."""
-        _LOGGER.debug(
-            "Login attempt with username_preview=%r (len=%d), password_len=%d",
-            (self._username[:2] + "…" if len(self._username) > 2 else self._username),
-            len(self._username),
-            len(self._password),
-        )
-
-        try:
-            async with self._session.get(LOGIN_URL, headers=DEFAULT_HEADERS) as resp:
-                resp.raise_for_status()
-                html = await resp.text()
-                cookies_after_get = {
-                    c.key: c.value for c in self._session.cookie_jar if c.key
-                }
-        except aiohttp.ClientError as err:
-            raise PodaConnectionError(f"Could not load login page: {err}") from err
-
-        _LOGGER.debug(
-            "Login page GET: status=%s cookies_received=%s csrf_cookie_value=%r",
-            resp.status,
-            sorted(cookies_after_get.keys()),
-            cookies_after_get.get("_csrf"),
-        )
+        html = await self._fetch(LOGIN_URL)
 
         soup = BeautifulSoup(html, "html.parser")
         form = soup.find("form", id=re.compile("login", re.I)) or soup.find("form")
@@ -136,7 +125,7 @@ class PodaClient:
             raise PodaAuthError("Login form not found on login page")
 
         action = form.get("action") or LOGIN_URL
-        post_url = urljoin(LOGIN_URL, action)
+        post_url = _portal_url(LOGIN_URL, action)
 
         payload: dict[str, str] = {}
         for inp in form.find_all(["input", "select", "button"]):
@@ -177,78 +166,30 @@ class PodaClient:
         headers["Origin"] = BASE_URL
         headers["Sec-Fetch-Site"] = "same-origin"
 
-        redacted_payload = {
-            k: ("***" if k in (user_field, pass_field) else v) for k, v in payload.items()
-        }
-        outgoing_cookies = {
-            c.key: c.value for c in self._session.cookie_jar if c.key
-        }
-        _LOGGER.debug(
-            "Login POST about to send: url=%s headers=%s payload=%s "
-            "hidden_csrf_field=%r cookie_jar_csrf=%r cookies_that_will_be_sent=%s",
-            post_url,
-            headers,
-            redacted_payload,
-            payload.get("_csrf"),
-            outgoing_cookies.get("_csrf"),
-            sorted(outgoing_cookies.keys()),
-        )
-
         try:
             async with self._session.post(
-                post_url, data=payload, headers=headers, allow_redirects=True
+                post_url, data=payload, headers=headers, allow_redirects=False
             ) as resp:
                 status = resp.status
-                final_url = str(resp.url)
+                location = resp.headers.get("Location")
                 html = await resp.text()
-        except aiohttp.ClientError as err:
-            raise PodaConnectionError(f"Login request failed: {err}") from err
+        except (aiohttp.ClientError, TimeoutError):
+            raise PodaConnectionError("Login request failed") from None
+
+        if 300 <= status < 400:
+            if status not in (301, 302, 303) or not location:
+                raise PodaConnectionError("Unsupported login redirect")
+            html = await self._fetch(_portal_url(post_url, location))
+            status = 200
 
         soup_after = BeautifulSoup(html, "html.parser")
         still_on_login = soup_after.find("form", id=re.compile("login", re.I)) is not None
 
-        _LOGGER.debug(
-            "Login POST: status=%s final_url=%s fields_sent=%s still_on_login_form=%s",
-            status,
-            final_url,
-            sorted(payload.keys()),
-            still_on_login,
-        )
-
-        if still_on_login:
-            # The most reliable failure signal: the exact same login form is
-            # present again. This is language/wording independent, unlike
-            # scanning for a specific error message.
-            title = soup_after.find("title")
-            form_after = soup_after.find("form", id=re.compile("login", re.I))
-            context_html = ""
-            search_root = None
-            if form_after is not None:
-                search_root = form_after.parent.parent if form_after.parent else form_after
-                context_node = search_root or form_after
-                context_html = str(context_node)
-            else:
-                body = soup_after.find("body")
-                context_html = str(body) if body else html
-            error_text = ""
-            if search_root is not None:
-                error_candidate = search_root.find(
-                    class_=re.compile("alert|error|invalid|help-block", re.I)
-                )
-                if error_candidate is not None:
-                    error_text = error_candidate.get_text(strip=True)
-            _LOGGER.debug(
-                "Login POST failed: title=%r error_text=%r response_length=%d",
-                title.get_text(strip=True) if title else None,
-                error_text,
-                len(html),
-            )
-            _LOGGER.debug(
-                "Login form area HTML (%d chars):\n%s", len(context_html), context_html[:6000]
-            )
-            raise PodaAuthError(
-                f"Login rejected - still on login form after POST. {error_text}".strip()
-            )
+        if status in (401, 403) or still_on_login:
+            raise PodaAuthError("Login rejected by portal")
+        if status >= 400:
+            raise PodaConnectionError("Login request failed")
+        _LOGGER.debug("Portal login completed")
 
         self._logged_in = True
 
@@ -268,7 +209,12 @@ class PodaClient:
             html = await self._fetch(BILLING_URL)
             soup = BeautifulSoup(html, "html.parser")
 
+        if soup.find("form", id=re.compile("login", re.I)):
+            self._logged_in = False
+            raise PodaAuthError("Portal session could not be restored")
+
         stats: dict[str, NumberStats] = {}
+        self._discover_numbers(soup, stats)
 
         # HTML table gives us the name + the FUP limit ("Objem"), and also
         # a fallback "used" value in case the data CSV export ever changes.
@@ -279,7 +225,7 @@ class PodaClient:
             csv_bytes = await self._fetch_bytes(calls_url)
             self._parse_calls_csv(csv_bytes, stats)
         else:
-            _LOGGER.warning("Could not find CSV export link for 'Volání' section")
+            _LOGGER.warning("Could not find CSV export link for 'VolĂˇnĂ­' section")
 
         sms_url = self._find_csv_link(soup, "SMS")
         if sms_url:
@@ -289,48 +235,43 @@ class PodaClient:
             _LOGGER.warning("Could not find CSV export link for 'SMS a MMS' section")
 
         # Data usage is already parsed from the HTML billing summary table
-        # (Objem + Vyčerpáno columns). The portal's data CSV link returns
+        # (Objem + VyÄŤerpĂˇno columns). The portal's data CSV link returns
         # a different format than expected (calls headers), so we skip it
         # and rely on the HTML table values.
 
-        _LOGGER.debug(
-            "PODA stats for entities: %s",
-            {
-                number: {
-                    "nazev": s.name,
-                    "pocet_hovoru": s.calls_count,
-                    "volane_minuty": s.calls_minutes,
-                    "cena_hovoru_kc": s.calls_price,
-                    "pocet_sms": s.sms_count,
-                    "cena_sms_kc": s.sms_price,
-                    "vycerpano_mb": s.data_used_mb,
-                    "limit_mb": s.data_limit_mb,
-                }
-                for number, s in stats.items()
-            },
-        )
+        _LOGGER.debug("Billing statistics updated for %d numbers", len(stats))
 
         return stats
 
     async def _fetch(self, url: str) -> str:
-        try:
-            async with self._session.get(url, headers=DEFAULT_HEADERS) as resp:
-                resp.raise_for_status()
-                return await resp.text()
-        except aiohttp.ClientError as err:
-            raise PodaConnectionError(f"GET {url} failed: {err}") from err
+        return (await self._request_get(url, binary=False))
 
     async def _fetch_bytes(self, url: str) -> bytes:
+        return (await self._request_get(url, binary=True))
+
+    async def _request_get(self, url: str, *, binary: bool) -> str | bytes:
+        """Follow a bounded number of redirects only inside the portal."""
+        url = _portal_url(BASE_URL, url)
         try:
-            async with self._session.get(url, headers=DEFAULT_HEADERS) as resp:
-                resp.raise_for_status()
-                return await resp.read()
-        except aiohttp.ClientError as err:
-            raise PodaConnectionError(f"GET {url} failed: {err}") from err
+            for _ in range(6):
+                async with self._session.get(
+                    url, headers=DEFAULT_HEADERS, allow_redirects=False
+                ) as resp:
+                    if 300 <= resp.status < 400:
+                        location = resp.headers.get("Location")
+                        if not location:
+                            raise PodaConnectionError("Portal redirect has no location")
+                        url = _portal_url(url, location)
+                        continue
+                    resp.raise_for_status()
+                    return await resp.read() if binary else await resp.text()
+        except (aiohttp.ClientError, TimeoutError):
+            raise PodaConnectionError("Portal request failed") from None
+        raise PodaConnectionError("Too many portal redirects")
 
     @staticmethod
     def _find_csv_link(soup: BeautifulSoup, section_heading: str) -> str | None:
-        """Find the 'Stáhnout jako CSV' link belonging to a given section.
+        """Find the 'StĂˇhnout jako CSV' link belonging to a given section.
 
         The link can appear either before or after the section heading in
         document order (e.g. visually placed top-right of a header row but
@@ -354,7 +295,27 @@ class PodaClient:
                 csv_links.sort(key=lambda a: abs(position.get(id(a), 0) - heading_idx))
 
         href = csv_links[0].get("href")
-        return urljoin(BASE_URL, href) if href else None
+        return _portal_url(BASE_URL, href) if href else None
+
+    @staticmethod
+    def _discover_numbers(soup: BeautifulSoup, stats: dict[str, NumberStats]) -> None:
+        """Discover owned numbers from billing number columns, even with no usage."""
+        for table in soup.find_all("table"):
+            headers = [cell.get_text(" ", strip=True).lower() for cell in table.find_all("th")]
+            index = next(
+                (i for i, header in enumerate(headers) if header in
+                 ("ÄŤĂ­slo", "cislo", "telefonnĂ­ ÄŤĂ­slo", "telefonni cislo")),
+                None,
+            )
+            if index is None:
+                continue
+            for row in table.find_all("tr"):
+                cells = row.find_all("td", recursive=False)
+                if index >= len(cells):
+                    continue
+                number = _normalize_number(cells[index].get_text(strip=True))
+                if number:
+                    stats.setdefault(number, NumberStats(number=number))
 
     @staticmethod
     def _parse_data_usage(soup: BeautifulSoup, stats: dict[str, NumberStats]) -> None:
@@ -423,7 +384,7 @@ class PodaClient:
         """Parse the data-usage CSV export.
 
         The portal serves two different CSV formats for data:
-          1. Summary format (vyuctovani-csv): Číslo, Název, Typ, Objem, Vyčerpáno
+          1. Summary format (vyuctovani-csv): ÄŚĂ­slo, NĂˇzev, Typ, Objem, VyÄŤerpĂˇno
              One row per number with limit and total usage.
           2. Per-session format: src, start, kb, price, zone
              One row per data session; usage is in kilobytes.
@@ -437,13 +398,13 @@ class PodaClient:
 
         _LOGGER.debug("Data CSV headers: %s", original)
 
-        # Check for summary format first (Číslo / Název / Objem / Vyčerpáno)
+        # Check for summary format first (ÄŚĂ­slo / NĂˇzev / Objem / VyÄŤerpĂˇno)
         has_summary_cols = any(
-            "vycerpano" in h or "vyčerpáno" in h for h in fieldnames
+            "vycerpano" in h or "vyÄŤerpĂˇno" in h for h in fieldnames
         )
         if has_summary_cols:
-            src_field = _find_field(fieldnames, original, ["cislo", "číslo", "cis"])
-            used_field = _find_field(fieldnames, original, ["vycerpano", "vyčerpáno", "spotreba"])
+            src_field = _find_field(fieldnames, original, ["cislo", "ÄŤĂ­slo", "cis"])
+            used_field = _find_field(fieldnames, original, ["vycerpano", "vyÄŤerpĂˇno", "spotreba"])
             if src_field and used_field:
                 for row in reader:
                     number = _normalize_number(row.get(src_field, ""))
@@ -451,10 +412,6 @@ class PodaClient:
                         continue
                     entry = stats.setdefault(number, NumberStats(number=number))
                     entry.data_used_mb = _parse_data_volume(row.get(used_field, "0"))
-                    _LOGGER.debug(
-                        "Data CSV summary: number=%s used=%s MB",
-                        number, entry.data_used_mb,
-                    )
                 return
             _LOGGER.debug(
                 "Summary format detected but missing columns: src=%s used=%s",
@@ -527,13 +484,13 @@ def _find_heading(soup: BeautifulSoup, keyword: str):
     i.e. the most specific element that still contains the full heading
     text, ignoring large wrapping containers.
 
-    The page also contains a help/"Nápověda" panel that documents the CSV
-    column layout and reuses the exact same section names ("Volání",
-    "SMS a MMS", "Datové přenosy") *before* the real section headings
+    The page also contains a help/"NĂˇpovÄ›da" panel that documents the CSV
+    column layout and reuses the exact same section names ("VolĂˇnĂ­",
+    "SMS a MMS", "DatovĂ© pĹ™enosy") *before* the real section headings
     appear in the document. To avoid matching that help text instead of
     the actual section, we prefer a candidate whose nearest following
     <table> looks like a real data table (its header row contains
-    "Číslo") over just taking the shortest/first candidate.
+    "ÄŚĂ­slo") over just taking the shortest/first candidate.
     """
     keyword_lower = keyword.lower()
     candidates = []
@@ -560,7 +517,7 @@ def _find_heading(soup: BeautifulSoup, keyword: str):
         header_text = " ".join(
             cell.get_text(strip=True).lower() for cell in table.find_all(["th", "td"])[:5]
         )
-        if "\u010d\u00edslo" in header_text:  # "číslo"
+        if "\u010d\u00edslo" in header_text:  # "ÄŤĂ­slo"
             return cand
 
     return candidates[0]
@@ -578,15 +535,15 @@ def _find_field(lower_fieldnames: list[str], original: list[str] | None, keyword
 def _find_usage_table(soup: BeautifulSoup) -> Any | None:
     """Find the billing summary table containing data volume columns.
 
-    First tries to find a table with "Objem" and "Vyčerpáno" column headers
+    First tries to find a table with "Objem" and "VyÄŤerpĂˇno" column headers
     anywhere on the page (the main billing summary table). Falls back to
-    finding a table under a "Datové přenosy" heading.
+    finding a table under a "DatovĂ© pĹ™enosy" heading.
     """
     for table in soup.find_all("table"):
         headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
-        if any("objem" in h for h in headers) and any("vyčerpáno" in h for h in headers):
+        if any("objem" in h for h in headers) and any("vyÄŤerpĂˇno" in h for h in headers):
             return table
-    heading = _find_heading(soup, "Datové přenosy") or _find_heading(soup, "Datov")
+    heading = _find_heading(soup, "DatovĂ© pĹ™enosy") or _find_heading(soup, "Datov")
     if heading is not None:
         return heading.find_next("table")
     return None

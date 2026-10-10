@@ -1,11 +1,15 @@
 {
-  "domain": "poda_data",
-  "name": "PODA data",
-  "codeowners": ["@jerzik"],
+  "codeowners": [
+    "@jerzik"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/jerzik/PODA-data",
+  "domain": "poda_data",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/jerzik/PODA-data/issues",
-  "requirements": ["beautifulsoup4>=4.12.0"],
-  "version": "0.2.5"
+  "name": "PODA data",
+  "requirements": [
+    "beautifulsoup4==4.15.0"
+  ],
+  "version": "0.3.0"
 }
