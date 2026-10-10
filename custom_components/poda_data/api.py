@@ -9,12 +9,12 @@ overwriting whichever fields look like the username/password inputs.
 This makes the client considerably more resilient to small markup
 changes than hard-coded field names would be.
 
-After login, the client fetches the "VyĂşÄŤtovĂˇnĂ­" (billing) page for
+After login, the client fetches the "Vyúčtování" (billing) page for
 mobile numbers and:
-  * scrapes the "DatovĂ© pĹ™enosy" (data usage) table directly from the
+  * scrapes the "Datové přenosy" (data usage) table directly from the
     HTML to get the subscriber name and the FUP limit ("Objem"), and
-  * follows the "StĂˇhnout jako CSV" links for the "VolĂˇnĂ­" (calls),
-    "SMS a MMS" and "DatovĂ© pĹ™enosy" (data) sections and downloads +
+  * follows the "Stáhnout jako CSV" links for the "Volání" (calls),
+    "SMS a MMS" and "Datové přenosy" (data) sections and downloads +
     parses those three CSV exports.
 
 Confirmed CSV column layouts (verified against real exports):
@@ -225,7 +225,7 @@ class PodaClient:
             csv_bytes = await self._fetch_bytes(calls_url)
             self._parse_calls_csv(csv_bytes, stats)
         else:
-            _LOGGER.warning("Could not find CSV export link for 'VolĂˇnĂ­' section")
+            _LOGGER.warning("Could not find CSV export link for 'Volání' section")
 
         sms_url = self._find_csv_link(soup, "SMS")
         if sms_url:
@@ -235,7 +235,7 @@ class PodaClient:
             _LOGGER.warning("Could not find CSV export link for 'SMS a MMS' section")
 
         # Data usage is already parsed from the HTML billing summary table
-        # (Objem + VyÄŤerpĂˇno columns). The portal's data CSV link returns
+        # (Objem + Vyčerpáno columns). The portal's data CSV link returns
         # a different format than expected (calls headers), so we skip it
         # and rely on the HTML table values.
 
@@ -271,7 +271,7 @@ class PodaClient:
 
     @staticmethod
     def _find_csv_link(soup: BeautifulSoup, section_heading: str) -> str | None:
-        """Find the 'StĂˇhnout jako CSV' link belonging to a given section.
+        """Find the 'Stáhnout jako CSV' link belonging to a given section.
 
         The link can appear either before or after the section heading in
         document order (e.g. visually placed top-right of a header row but
@@ -304,7 +304,7 @@ class PodaClient:
             headers = [cell.get_text(" ", strip=True).lower() for cell in table.find_all("th")]
             index = next(
                 (i for i, header in enumerate(headers) if header in
-                 ("ÄŤĂ­slo", "cislo", "telefonnĂ­ ÄŤĂ­slo", "telefonni cislo")),
+                 ("číslo", "cislo", "telefonní číslo", "telefonni cislo")),
                 None,
             )
             if index is None:
@@ -384,7 +384,7 @@ class PodaClient:
         """Parse the data-usage CSV export.
 
         The portal serves two different CSV formats for data:
-          1. Summary format (vyuctovani-csv): ÄŚĂ­slo, NĂˇzev, Typ, Objem, VyÄŤerpĂˇno
+          1. Summary format (vyuctovani-csv): Číslo, Název, Typ, Objem, Vyčerpáno
              One row per number with limit and total usage.
           2. Per-session format: src, start, kb, price, zone
              One row per data session; usage is in kilobytes.
@@ -398,13 +398,13 @@ class PodaClient:
 
         _LOGGER.debug("Data CSV headers: %s", original)
 
-        # Check for summary format first (ÄŚĂ­slo / NĂˇzev / Objem / VyÄŤerpĂˇno)
+        # Check for summary format first (Číslo / Název / Objem / Vyčerpáno)
         has_summary_cols = any(
-            "vycerpano" in h or "vyÄŤerpĂˇno" in h for h in fieldnames
+            "vycerpano" in h or "vyčerpáno" in h for h in fieldnames
         )
         if has_summary_cols:
-            src_field = _find_field(fieldnames, original, ["cislo", "ÄŤĂ­slo", "cis"])
-            used_field = _find_field(fieldnames, original, ["vycerpano", "vyÄŤerpĂˇno", "spotreba"])
+            src_field = _find_field(fieldnames, original, ["cislo", "číslo", "cis"])
+            used_field = _find_field(fieldnames, original, ["vycerpano", "vyčerpáno", "spotreba"])
             if src_field and used_field:
                 for row in reader:
                     number = _normalize_number(row.get(src_field, ""))
@@ -484,13 +484,13 @@ def _find_heading(soup: BeautifulSoup, keyword: str):
     i.e. the most specific element that still contains the full heading
     text, ignoring large wrapping containers.
 
-    The page also contains a help/"NĂˇpovÄ›da" panel that documents the CSV
-    column layout and reuses the exact same section names ("VolĂˇnĂ­",
-    "SMS a MMS", "DatovĂ© pĹ™enosy") *before* the real section headings
+    The page also contains a help/"Nápověda" panel that documents the CSV
+    column layout and reuses the exact same section names ("Volání",
+    "SMS a MMS", "Datové přenosy") *before* the real section headings
     appear in the document. To avoid matching that help text instead of
     the actual section, we prefer a candidate whose nearest following
     <table> looks like a real data table (its header row contains
-    "ÄŚĂ­slo") over just taking the shortest/first candidate.
+    "Číslo") over just taking the shortest/first candidate.
     """
     keyword_lower = keyword.lower()
     candidates = []
@@ -517,7 +517,7 @@ def _find_heading(soup: BeautifulSoup, keyword: str):
         header_text = " ".join(
             cell.get_text(strip=True).lower() for cell in table.find_all(["th", "td"])[:5]
         )
-        if "\u010d\u00edslo" in header_text:  # "ÄŤĂ­slo"
+        if "\u010d\u00edslo" in header_text:  # "číslo"
             return cand
 
     return candidates[0]
@@ -535,15 +535,15 @@ def _find_field(lower_fieldnames: list[str], original: list[str] | None, keyword
 def _find_usage_table(soup: BeautifulSoup) -> Any | None:
     """Find the billing summary table containing data volume columns.
 
-    First tries to find a table with "Objem" and "VyÄŤerpĂˇno" column headers
+    First tries to find a table with "Objem" and "Vyčerpáno" column headers
     anywhere on the page (the main billing summary table). Falls back to
-    finding a table under a "DatovĂ© pĹ™enosy" heading.
+    finding a table under a "Datové přenosy" heading.
     """
     for table in soup.find_all("table"):
         headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
-        if any("objem" in h for h in headers) and any("vyÄŤerpĂˇno" in h for h in headers):
+        if any("objem" in h for h in headers) and any("vyčerpáno" in h for h in headers):
             return table
-    heading = _find_heading(soup, "DatovĂ© pĹ™enosy") or _find_heading(soup, "Datov")
+    heading = _find_heading(soup, "Datové přenosy") or _find_heading(soup, "Datov")
     if heading is not None:
         return heading.find_next("table")
     return None

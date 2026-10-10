@@ -12,7 +12,7 @@ sys.modules["poda_test"] = package
 api = importlib.import_module("poda_test.api")
 from bs4 import BeautifulSoup
 
-SUMMARY = """<table><tr><th>ÄŚĂ­slo</th><th>NĂˇzev</th><th>Objem</th><th>VyÄŤerpĂˇno</th></tr>
+SUMMARY = """<table><tr><th>Číslo</th><th>Název</th><th>Objem</th><th>Vyčerpáno</th></tr>
 <tr><td>000000001</td><td>Test tarif</td><td>2 GB</td><td>512 MB</td></tr>
 <tr><td>000000002</td><td>Bez provozu</td><td>1 GB</td><td>0 MB</td></tr></table>"""
 LOGIN = """<form id="login-form" action="/login">
@@ -44,7 +44,7 @@ class ParserTests(unittest.TestCase):
     def test_normalization(self):
         for value in ("000000001", "+420 000 000 001", "00420000000001"):
             self.assertEqual(api._normalize_number(value), "000000001")
-        for value in ("", "123", "420", "123456789012", "SouÄŤet 2"):
+        for value in ("", "123", "420", "123456789012", "Součet 2"):
             self.assertEqual(api._normalize_number(value), "")
 
     def test_unused_numbers(self):
@@ -57,7 +57,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(stats["000000002"].data_used_mb, 0)
 
     def test_excludes_destination_column(self):
-        soup = BeautifulSoup("<table><tr><th>CĂ­lovĂ© ÄŤĂ­slo</th></tr><tr><td>000000002</td></tr></table>", "html.parser")
+        soup = BeautifulSoup("<table><tr><th>Cílové číslo</th></tr><tr><td>000000002</td></tr></table>", "html.parser")
         stats = {}
         api.PodaClient._discover_numbers(soup, stats)
         self.assertEqual(stats, {})
